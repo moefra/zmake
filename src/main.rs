@@ -154,7 +154,6 @@ impl InformationArgs{
         println!("PACKAGE:{}", (*api::builtin::target_type::PACKAGE).0);
         println!("INSTALL:{}", (*api::builtin::target_type::INSTALL).0);
         println!("DEPLOY:{}", (*api::builtin::target_type::DEPLOY).0);
-        println!();
     }
 }
 
