@@ -1,6 +1,6 @@
-use crate::api::engine::Engine;
-use crate::api::project::ProjectExported;
-use crate::api::project_resolver::ProjectResolveError::{
+use crate::engine::Engine;
+use crate::project::ProjectExported;
+use crate::project_resolver::ProjectResolveError::{
     CircularDependency, FileNotExists, IOError, NotAFile,
 };
 use ahash::AHashMap;

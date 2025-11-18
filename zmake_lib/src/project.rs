@@ -1,4 +1,4 @@
-use crate::api::access_control::Visibility;
+use crate::access_control::Visibility;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

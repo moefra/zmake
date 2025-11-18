@@ -1,7 +1,9 @@
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 use strum_macros;
 use strum_macros::{EnumString, IntoStaticStr};
 use thiserror::Error;
@@ -303,7 +305,7 @@ impl FromStr for Id {
         let id_type = IdType::try_from(type_mark)
             .map_err(|_err| IdError::UnknownIdType(type_mark.to_string()))?;
 
-        for ident in name.split('.') {
+        for ident in ident.split('/') {
             let result =
                 Ident::from_str(ident).map_err(|err| Self::Err::InvalidPart(err.into()))?;
             idents.push(result);
@@ -315,11 +317,16 @@ impl FromStr for Id {
 
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}#", self.artifact_id)?;
+        write!(
+            f,
+            "{}#{}::",
+            self.artifact_id,
+            <IdType as Into<&'static str>>::into(self.get_type())
+        );
         if let Some(first) = self.name.first() {
             write!(f, "{}", first)?;
             for item in self.name.iter().skip(1) {
-                write!(f, ".{}", item)?;
+                write!(f, "/{}", item)?;
             }
         }
         Ok(())
@@ -337,7 +344,3 @@ pub enum IdError {
     #[error("unknown id type `{0}`")]
     UnknownIdType(String),
 }
-
-use ahash::AHashMap;
-
-pub type FeatureSet = AHashMap<Id, Id>;
