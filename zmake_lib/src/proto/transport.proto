@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package zmake.v1.transport;
+
+import "digest.proto";
+
+message DownloadRequest {
+    zmake.v1.digest.Digest digest = 1;
+    uint64 offset = 2;
+  }
+
+  message DownloadResponse {
+    bytes data = 1;
+  }
+
+  message UploadRequest {
+    oneof payload {
+      zmake.v1.digest.Digest metadata = 1;
+
+      bytes chunk = 2;
+    }
+  }
+
+  message UploadResponse {
+    uint64 committed_size = 1;
+  }
+
+service Transport {
+  rpc Download(DownloadRequest) returns (stream DownloadResponse);
+
+  rpc Upload(stream UploadRequest) returns (UploadResponse);
+}

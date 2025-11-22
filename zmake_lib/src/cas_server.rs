@@ -1,101 +1,139 @@
 use crate::cas::Cas;
-use crate::proto::net::SocketAddress;
-use crate::socket_address;
-use dashmap::DashMap;
-use std::pin::Pin;
-use std::sync::Arc;
-use tonic::{Code, Status};
-
-#[derive(Debug)]
-pub struct DefaultCasServer {
-    cas: Arc<dyn Cas + 'static>,
-    map: DashMap<String, TransportDetails>,
-    addr: crate::proto::net::SocketAddress,
-}
-
-impl DefaultCasServer {
-    pub fn new(cas: Arc<dyn Cas + 'static>, server_addr: std::net::SocketAddr) -> Self {
-        Self {
-            cas,
-            map: DashMap::new(),
-            addr: server_addr.into(),
-        }
-    }
-}
-
+use crate::digest::{Digest, DigestError}; // 假设你把 TryFrom 放到了这里
 use crate::proto::cas::{
     GetTransportDetailsRequest, NegotiateBlobsRequest, NegotiateBlobsResponse, TransportDetails,
     content_addressable_storage_server::ContentAddressableStorage,
 };
-use tonic::codegen::tokio_stream::Stream;
-use tonic::{Request, Response, Streaming};
+use dashmap::DashMap;
+use futures::{StreamExt, TryStreamExt}; // 引入 Stream 扩展方法
+use std::pin::Pin;
+use std::sync::Arc;
+use tonic::{Request, Response, Status, Streaming};
+use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub struct CasServerOptions {
+    pub cas: Arc<dyn Cas + Send + Sync + 'static>,
+    pub server_address: crate::proto::net::SocketAddress,
+    pub buffered_io_count: usize,
+    pub recommended_concurrency: usize,
+}
+
+impl CasServerOptions {
+    pub fn new_default(
+        cas: Arc<dyn Cas + Send + Sync + 'static>,
+        server_address: crate::proto::net::SocketAddress,
+    ) -> Self {
+        Self {
+            cas,
+            server_address,
+            buffered_io_count: num_cpus::get(),
+            recommended_concurrency: num_cpus::get(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CasServer {
+    cas: Arc<dyn Cas + Send + Sync + 'static>,
+    // TODO: TTL
+    tokens: Arc<DashMap<String, ()>>,
+    server_address: crate::proto::net::SocketAddress,
+    buffered_io_count: usize,
+    recommended_concurrency: usize,
+}
+
+impl CasServer {
+    pub fn new(options: CasServerOptions) -> Self {
+        Self {
+            cas: options.cas,
+            tokens: Arc::new(DashMap::new()),
+            server_address: options.server_address.into(),
+            buffered_io_count: options.buffered_io_count,
+            recommended_concurrency: options.recommended_concurrency,
+        }
+    }
+}
 
 #[tonic::async_trait]
-impl ContentAddressableStorage for DefaultCasServer {
+impl ContentAddressableStorage for CasServer {
     type NegotiateBlobsStream =
-        Pin<Box<dyn Stream<Item = Result<NegotiateBlobsResponse, Status>> + Send>>;
+        Pin<Box<dyn tokio_stream::Stream<Item = Result<NegotiateBlobsResponse, Status>> + Send>>;
 
     async fn negotiate_blobs(
         &self,
         request: Request<Streaming<NegotiateBlobsRequest>>,
     ) -> Result<Response<Self::NegotiateBlobsStream>, Status> {
-        let mut missing_blob_digests: Vec<crate::proto::digest::Digest> = Vec::new();
+        let cas = self.cas.clone();
+        let mut in_stream = request.into_inner();
 
-        let next_request = request.into_inner().message().await?;
+        let io_buffered_count = self.buffered_io_count;
 
-        if let Some(request) = next_request {
-            for blob_digest in request.blob_digests {
-                let cloned = blob_digest.clone();
-                if !self
-                    .cas
-                    .check(
-                        &cloned
-                            .try_into()
-                            .map_err(|err: crate::digest::DigestError| {
-                                Status::invalid_argument(err.to_string())
-                            })?,
-                    )
-                    .await
-                {
-                    missing_blob_digests.push(blob_digest);
+        let output_stream = async_stream::try_stream! {
+            while let Some(req) = in_stream.message().await? {
+
+                let mut missing_blobs = Vec::new();
+
+                let checks =
+                futures::stream::iter(req.blob_digests.into_iter())
+                    .map(|proto_digest| {
+                        let cas_ref = cas.clone();
+                        return (async move || {
+                            let digest: Digest = proto_digest.try_into()
+                                .map_err(|e: DigestError| Status::from(e))?;
+
+                            return if !cas_ref.contains(&digest).await {
+                                Ok(Some(digest))
+                            } else {
+                                Ok(None)
+                            };
+                        })();
+                    })
+                .buffer_unordered(io_buffered_count);
+
+                let results: Vec<Result<Option<Digest>, Status>> = checks.collect().await;
+
+                for res in results {
+                    if let Some(d) = res? {
+                        missing_blobs.push(d.into());
+                    }
+                }
+
+                if !missing_blobs.is_empty() {
+                    yield NegotiateBlobsResponse {
+                        missing_blob_digests: missing_blobs,
+                    };
                 }
             }
-        }
+        };
 
-        return Ok(Response::new(Box::pin(tokio_stream::iter(
-            missing_blob_digests.into_iter().map(|digest| {
-                Ok(NegotiateBlobsResponse {
-                    missing_blob_digests: vec![digest.into()],
-                })
-            }),
-        ))));
+        Ok(Response::new(Box::pin(output_stream)))
     }
 
     async fn get_transport_details(
         &self,
         request: Request<GetTransportDetailsRequest>,
     ) -> Result<Response<TransportDetails>, Status> {
-        let server_addr = Some(self.addr.clone());
-
         let inner = request.into_inner();
 
-        let mut accept_protocol: Option<crate::proto::net::Protocol> = None;
-
-        for supported_protocol in inner.supported_protocols {
-            if supported_protocol
-                == <crate::proto::net::Protocol as Into<i32>>::into(
-                    crate::proto::net::Protocol::Quic,
-                )
-            {
-                accept_protocol = Some(crate::proto::net::Protocol::Quic);
+        for protocol in inner.supported_protocols {
+            if protocol == crate::proto::net::Protocol::Grpc.into() {
+                // Only GRpc is supported
                 break;
+            } else {
+                return Err(Status::failed_precondition(
+                    "No supported transport protocol found",
+                ));
             }
         }
 
-        return Ok(Response::new(TransportDetails {
-            server_addr,
-            auth_token: "todo!()".to_string(),
-            recommended_concurrency: 1,
-        }));
+        let token = Uuid::new_v4().to_string();
+        self.tokens.insert(token.clone(), ());
+
+        Ok(Response::new(TransportDetails {
+            server_addr: Some(self.server_address.clone()),
+            auth_token: token,
+            recommended_concurrency: self.recommended_concurrency as u32,
+        }))
     }
 }

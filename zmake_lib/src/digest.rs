@@ -1,6 +1,7 @@
 use crate::fs::VirtualFsItem;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tonic::Status;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Digest {
@@ -31,20 +32,6 @@ impl Digest {
             fast_xxhash3_128: xxhash,
             secure_sha256: Some(sha256),
             size_bytes: size,
-        }
-    }
-
-    /// 升级 Digest：补充计算 SHA256
-    ///
-    /// 当 Worker 决定上传文件时调用此方法
-    pub fn ensure_secure(&mut self, content: &[u8]) {
-        if self.secure_sha256.is_none() {
-            // 这里使用 sha2 库
-            use sha2::{Digest as ShaDigestTrait, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(content);
-            let result = hasher.finalize();
-            self.secure_sha256 = Some(result.into());
         }
     }
 

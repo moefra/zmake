@@ -3,7 +3,7 @@ use crate::digest::Digest;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::io::{AsyncRead, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Debug)]
 pub struct LocalCas {
@@ -59,7 +59,6 @@ impl Cas for LocalCas {
             .map_err(|err| CasError::Io(err.into()))?;
 
         // 在 POSIX 系统上，rename 是原子的。
-        // 如果重命名成功，说明文件完整地出现在了位置上。
         fs::rename(&temp_path, &target_path)
             .await
             .map_err(|err| CasError::Io(err.into()))?;
@@ -67,26 +66,38 @@ impl Cas for LocalCas {
         Ok(())
     }
 
-    async fn check(&self, digest: &Digest) -> bool {
+    async fn check(&self, digest: &Digest) -> Option<u64> {
         let hex = digest.hex_fast_xxhash3_128();
 
         let path = self.root.join(&hex[0..2]).join(&hex[2..4]).join(&hex[4..]);
 
-        fs::metadata(path).await.is_ok()
+        fs::metadata(path).await.ok().map(|meta| meta.len())
     }
 
-    async fn fetch(&self, digest: &Digest) -> Result<Box<dyn AsyncRead + Send + Unpin>, CasError> {
+    async fn contains(&self, digest: &Digest) -> bool {
+        self.check(digest).await.is_some()
+    }
+
+    async fn fetch(
+        &self,
+        digest: &Digest,
+        offset: u64,
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin>, CasError> {
         let hex = digest.hex_fast_xxhash3_128();
 
         let path = self.root.join(&hex[0..2]).join(&hex[2..4]).join(&hex[4..]);
 
-        let file = tokio::fs::File::open(path).await.map_err(|e| {
+        let mut file = tokio::fs::File::open(path).await.map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 CasError::NotFound(digest.hex_fast_xxhash3_128())
             } else {
                 CasError::Io(e)
             }
         })?;
+
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(CasError::Io)?;
 
         Ok(Box::from(file))
     }
@@ -96,7 +107,7 @@ impl Cas for LocalCas {
 
         let path = self.root.join(&hex[0..2]).join(&hex[2..4]).join(&hex[4..]);
 
-        if self.check(digest).await {
+        if self.contains(digest).await {
             Some(path)
         } else {
             None

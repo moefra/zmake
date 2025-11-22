@@ -2,6 +2,8 @@ pub mod Isolate;
 pub mod access_control;
 pub mod build_constants;
 pub mod builtin;
+mod cas;
+mod cas_server;
 pub mod configuration;
 mod digest;
 pub mod engine;
@@ -9,17 +11,15 @@ mod error;
 pub mod file_finder;
 pub mod fs;
 pub mod id;
+mod local_cas;
 mod make_builtin;
 pub mod project;
 pub mod project_resolver;
+pub mod socket_address;
 pub mod target;
 mod tool;
-pub mod version_extractor;
-mod cas;
-mod local_cas;
-mod cas_server;
-pub mod socket_address;
 mod transport_server;
+pub mod version_extractor;
 
 pub mod proto {
     pub mod digest {
@@ -36,5 +36,9 @@ pub mod proto {
 
     pub mod cas {
         tonic::include_proto!("zmake.v1.cas");
+    }
+
+    pub mod transport {
+        tonic::include_proto!("zmake.v1.transport");
     }
 }

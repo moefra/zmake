@@ -7,6 +7,7 @@ fn main() -> Result<()> {
             "src/proto/fs.proto",
             "src/proto/net.proto",
             "src/proto/cas.proto",
+            "src/proto/transport.proto",
         ],
         &["src/proto/"],
     )?;
