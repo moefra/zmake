@@ -15,5 +15,5 @@ message SocketAddress{
 }
 
 enum Protocol{
-  Quic = 0;
+  grpc = 0;
 }

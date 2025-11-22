@@ -7,7 +7,7 @@ use tokio::io::AsyncRead;
 
 /// A Content Addressable Storage (CAS) is a storage system that stores data by its content rather than by its location.
 #[async_trait]
-pub trait Cas {
+pub trait Cas: Send + Sync + 'static + std::fmt::Debug {
     /// Store the data in the CAS.
     async fn store(
         &self,

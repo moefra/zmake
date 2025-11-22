@@ -1,10 +1,14 @@
 use crate::builtin;
 use cfg_if::cfg_if;
-use std::{env, fs};
-use tracing::trace;
+use eyre::Context;
+use std::env::VarError;
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::{env, fs, iter};
+use tracing::{trace, warn};
 
 pub struct FileFinder {
-    pub paths: Vec<String>,
+    pub paths: Vec<PathBuf>,
     pub prefixes: Vec<String>,
     pub suffixes: Vec<String>,
 }
@@ -24,24 +28,29 @@ impl FileFinder {
         Self::default()
     }
 
-    pub fn from_env() -> Self {
+    pub fn from_path_env() -> Self {
         let prefixes = Vec::<String>::default();
-        let paths = env::var("PATH")
-            .unwrap()
-            .split(if env::consts::OS == "windows" {
-                ';'
-            } else {
-                ':'
-            })
-            .map(|x| x.to_string())
-            .collect();
 
-        let suffixes: Vec<String> = if env::consts::OS == "windows" {
-            env::var("PATHEXT")
-                .unwrap()
+        let paths: Vec<PathBuf> = env::split_paths(&env::var_os("PATH").unwrap_or_else(|| {
+            warn!("failed to read variable PATH for file finder,skip");
+            OsString::new()
+        }))
+        .collect();
+
+        let suffixes = if cfg!(windows) {
+            env::var_os("PATHEXT")
+                .unwrap_or_else(|| {
+                    warn!("failed to read variable PATHEXT for file finder,skip");
+                    OsString::new()
+                })
+                .to_string_lossy()
                 .split(';')
-                .map(|x| [x.to_string(), x.to_ascii_lowercase()])
-                .flatten()
+                .flat_map(|x| {
+                    // In case of case-sensitive file system(like NTFS with case-sensitive), we need to consider both cases
+                    let s = x.to_string();
+                    let lower = s.to_ascii_lowercase();
+                    if s == lower { vec![s] } else { vec![s, lower] }
+                })
                 .collect()
         } else {
             Vec::default()
@@ -54,27 +63,30 @@ impl FileFinder {
         }
     }
 
-    pub fn search(&self, target: &str) -> Vec<String> {
-        let mut result: Vec<String> = Vec::default();
-        for path in self.paths.iter() {
-            for prefix in [String::default()].iter().chain(self.prefixes.iter()) {
-                for suffix in [String::default()].iter().chain(self.suffixes.iter()) {
-                    let target = format!("{}/{}{}{}", path, prefix, target, suffix);
+    pub fn search<'a>(&'a self, target: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
+        self.paths.iter().flat_map(move |path| {
+            std::iter::once("")
+                .chain(self.prefixes.iter().map(|x| x.as_str()))
+                .flat_map(move |prefix| {
+                    std::iter::once("")
+                        .chain(self.suffixes.iter().map(|x| x.as_str()))
+                        .filter_map(move |suffix| {
+                            let filename = format!("{}{}{}", prefix, target, suffix);
+                            let full_path = path.join(&filename);
 
-                    match fs::exists(&target) {
-                        Ok(status) => {
-                            if status {
-                                trace!("Search {} - found", &target);
-                                result.push(target);
+                            if full_path.is_file() {
+                                trace!("Search {:?} - found", full_path);
+                                Some(full_path)
                             } else {
-                                trace!("Search {} - not found", target)
+                                trace!("Search {:?} - not found", full_path);
+                                None
                             }
-                        }
-                        Err(err) => trace!("Search {} - failed to access io - {}", target, err),
-                    }
-                }
-            }
-        }
-        result
+                        })
+                })
+        })
+    }
+
+    pub fn search_first(&self, target: &str) -> Option<PathBuf> {
+        self.search(target).next()
     }
 }

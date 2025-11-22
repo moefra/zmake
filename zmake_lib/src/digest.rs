@@ -2,7 +2,7 @@ use crate::fs::VirtualFsItem;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone,Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Digest {
     /// The fast hash value of the file.
     ///
@@ -118,5 +118,15 @@ impl TryFrom<crate::proto::digest::Digest> for Digest {
         } else {
             Ok(Self::new(fast, value.size_bytes))
         };
+    }
+}
+
+impl Into<crate::proto::digest::Digest> for Digest {
+    fn into(self) -> crate::proto::digest::Digest {
+        crate::proto::digest::Digest {
+            fast_xxhash3_128: self.fast_xxhash3_128.to_be_bytes().to_vec(),
+            secure_sha256: self.secure_sha256.map(|sha256| sha256.to_vec()),
+            size_bytes: self.size_bytes,
+        }
     }
 }

@@ -1,11 +1,8 @@
 use semver::Version;
 use std::process::{Command, Stdio};
-use tracing::{span, trace, trace_span};
-use tracing_core::Level;
+use tracing::{trace, trace_span};
 
-fn extract_from_string(string: String) -> Option<Version> {
-    let _span = trace_span!("try extract program version", extract_from = string).entered();
-
+fn extract_from_string(string: &str) -> Option<Version> {
     for part in string.trim().split_whitespace() {
         if let Ok(version) = Version::parse(part) {
             return Some(version);
@@ -17,43 +14,47 @@ fn extract_from_string(string: String) -> Option<Version> {
 }
 
 fn extract_from_command(program: &str, argument: &str) -> Option<Version> {
-    let _span = trace_span!("try get program version", program, argument).entered();
-
-    if let Ok(result) = Command::new(program)
-        .env_clear()
+    match Command::new(program)
+        .env("LC_ALL", "C")
+        .env("LANG", "C")
         .stdin(Stdio::null())
         .arg(argument)
         .output()
     {
-        if let Ok(output) = String::from_utf8(result.stdout) {
-            match extract_from_string(output) {
-                Some(version) => Some(version),
-                None => {
-                    if let Ok(output) = String::from_utf8(result.stderr) {
-                        extract_from_string(output)
-                    } else {
-                        None
-                    }
-                }
-            }
-        } else {
+        Ok(result) => {
+            let from = String::from_utf8_lossy(&result.stdout);
+
+            extract_from_string(&from).or_else(|| {
+                let from = String::from_utf8_lossy(&result.stderr);
+                extract_from_string(&from)
+            })
+        }
+        Err(err) => {
+            trace!("failed to run program when extract version:{}", err);
             None
         }
-    } else {
-        None
     }
 }
 
-pub fn extract_version(program_file: String) -> Option<Version> {
+pub fn extract_version(program_file: &str) -> Option<Version> {
     let _span = trace_span!("try get program version", program_file).entered();
 
-    if let Some(version) = extract_from_command(&program_file, "--version") {
-        trace!("Extract {version} from {program_file} with argument `--version`");
-        Some(version)
-    } else if let Some(version) = extract_from_command(&program_file, "-V") {
-        trace!("Extract {version} from {program_file} with argument `-V`");
-        Some(version)
-    } else {
-        None
+    const VERSION_ARGS: &[&str] = &["--version", "-V"];
+
+    for arg in VERSION_ARGS {
+        if let Some(version) = extract_from_command(program_file, arg) {
+            trace!(
+                "found version {} for '{}' using argument '{}'",
+                version, program_file, arg
+            );
+            return Some(version);
+        } else {
+            trace!(
+                "failed to extract version from '{}' using argument '{}'",
+                program_file, arg
+            );
+        }
     }
+
+    None
 }

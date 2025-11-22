@@ -17,6 +17,9 @@ mod tool;
 pub mod version_extractor;
 mod cas;
 mod local_cas;
+mod cas_server;
+pub mod socket_address;
+mod transport_server;
 
 pub mod proto {
     pub mod digest {

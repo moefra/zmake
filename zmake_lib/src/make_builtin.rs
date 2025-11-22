@@ -5,7 +5,7 @@ macro_rules! make_builtin {
         self => { $($id:literal => { $($type:ident => { $($key:ident => $value:literal),* }),* } ),* }
     } => {
         #[allow(unused_imports)]
-        use $crate::id::IdType::{ToolType,Tool,TargetType,Target,Os,Architecture,Property};
+        use $crate::id::IdType::{ToolType,Tool,ToolProvider,TargetType,Target,Os,Architecture,Property};
 
         $(
             pub mod $submodule;

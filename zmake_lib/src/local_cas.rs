@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::{AsyncRead, AsyncWriteExt};
 
+#[derive(Debug)]
 pub struct LocalCas {
     root: PathBuf,
 }
