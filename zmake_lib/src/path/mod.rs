@@ -1,8 +1,8 @@
-use std::fmt::Display;
-use std::path::{Display, Path};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+use std::fmt::Display;
+use std::path::Path;
 use std::string::String;
+use thiserror::Error;
 
 type StackString<'a> = smallvec::SmallVec<[&'a str; 8]>;
 
@@ -29,8 +29,10 @@ pub enum PathError {
     InvalidFormat(&'static str),
     #[error("Invalid path character: {0}")]
     InvalidCharacter(&'static str),
-    #[error("Path is absolute, but a relative path is required for zmake::path::NeutralPath to construct or join")]
-    PathIsAbsolute()
+    #[error(
+        "Path is absolute, but a relative path is required for zmake::path::NeutralPath to construct or join"
+    )]
+    PathIsAbsolute(),
 }
 
 impl Display for NeutralPath {
@@ -56,7 +58,6 @@ impl AsRef<Path> for NeutralPath {
         Path::new(&self.0)
     }
 }
-
 
 impl AsRef<NeutralPath> for NeutralPath {
     fn as_ref(&self) -> &NeutralPath {
@@ -84,17 +85,16 @@ impl std::fmt::Debug for NeutralPath {
     }
 }
 
-impl NeutralPath{
-
-    fn check_if_absolute(part:&str)->Result<(), PathError> {
+impl NeutralPath {
+    fn check_if_absolute(part: &str) -> Result<(), PathError> {
         // check if starts with / or \ or \\
-        if part.starts_with('/') || part.starts_with("\\"){
+        if part.starts_with('/') || part.starts_with("\\") {
             return Err(PathError::PathIsAbsolute());
         }
 
-        if let Some((left,_right)) = part.split_once(":"){
+        if let Some((left, _right)) = part.split_once(":") {
             // check if like C: or d:
-            if left.chars().all(|c| c.is_ascii_alphabetic()){
+            if left.chars().all(|c| c.is_ascii_alphabetic()) {
                 return Err(PathError::PathIsAbsolute());
             }
         }
@@ -102,88 +102,86 @@ impl NeutralPath{
         Ok(())
     }
 
-    fn check_path_name_is_valid(part:&str) -> Result<(), PathError> {
+    fn check_path_name_is_valid(part: &str) -> Result<(), PathError> {
         // limitation from unix
-        if(part.contains('\0')){
+        if (part.contains('\0')) {
             return Err(PathError::InvalidCharacter("\\0"));
         }
 
         // limitation from windows
-        if part.contains("<"){
+        if part.contains("<") {
             return Err(PathError::InvalidCharacter("<"));
         }
-        if part.contains(">"){
+        if part.contains(">") {
             return Err(PathError::InvalidCharacter(">"));
         }
-        if part.contains(":"){
+        if part.contains(":") {
             return Err(PathError::InvalidCharacter(":"));
         }
-        if part.contains("\""){
+        if part.contains("\"") {
             return Err(PathError::InvalidCharacter("\""));
         }
-        if part.contains("|"){
+        if part.contains("|") {
             return Err(PathError::InvalidCharacter("|"));
         }
-        if part.contains("?"){
+        if part.contains("?") {
             return Err(PathError::InvalidCharacter("?"));
         }
-        if part.contains("*"){
+        if part.contains("*") {
             return Err(PathError::InvalidCharacter("*"));
         }
 
-        if part.ends_with(" "){
+        if part.ends_with(" ") {
             return Err(PathError::InvalidFormat("space ` ` at the end"));
         }
 
         // NUL NUL.gzip NUL.tar.gz is all invalid
-        let strip = if let Some((left,_right)) = part.split_once("."){
+        let strip = if let Some((left, _right)) = part.split_once(".") {
             left
-        }
-        else{
+        } else {
             part
         };
 
         let strip = strip.to_ascii_uppercase();
 
-        match strip.as_str(){
-            "CON" | "PRN" | "AUX" | "NUL" |
-            "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9" |
-            "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9" |
-            "COM¹" | "COM²" | "COM³" | "LPT¹" | "LPT²" | "LPT³" => {
-                return Err(PathError::InvalidCharacter("reserved name from windows(e.g. NUL COM or LPT¹"));
-            },
+        match strip.as_str() {
+            "CON" | "PRN" | "AUX" | "NUL" | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6"
+            | "COM7" | "COM8" | "COM9" | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6"
+            | "LPT7" | "LPT8" | "LPT9" | "COM¹" | "COM²" | "COM³" | "LPT¹" | "LPT²" | "LPT³" =>
+            {
+                return Err(PathError::InvalidCharacter(
+                    "reserved name from windows(e.g. NUL COM or LPT¹",
+                ));
+            }
             _ => {}
         }
 
         // limitation from my thought
-        if part.contains("\'"){
+        if part.contains("\'") {
             return Err(PathError::InvalidCharacter("\'"));
         }
 
         return Ok(());
     }
 
-    fn internal_normalize(path: &str,check:bool) -> Result<NeutralPath,PathError> {
-        let split = path.split(['/','\\']);
-        let mut components:StackString = StackString::new();
+    fn internal_normalize(path: &str, check: bool) -> Result<NeutralPath, PathError> {
+        let split = path.split(['/', '\\']);
+        let mut components: StackString = StackString::new();
 
         for part in split {
             if part == "." || part.is_empty() {
                 continue;
             } else if part == ".." {
-                if let Some(last) = components.last(){
-                    if *last == ".."{
+                if let Some(last) = components.last() {
+                    if *last == ".." {
                         components.push("..");
-                    }
-                    else{
+                    } else {
                         components.pop();
                     }
-                }
-                else{
+                } else {
                     components.push(part);
                 }
-            }
-            else {
+            } else {
                 if check {
                     Self::check_path_name_is_valid(part)?;
                 }
@@ -191,26 +189,26 @@ impl NeutralPath{
             }
         }
 
-        if components.is_empty(){
+        if components.is_empty() {
             components.push(".")
         }
 
         Ok(NeutralPath(components.join("/")))
     }
 
-    fn checked_normalize(path: &str) -> Result<NeutralPath,PathError> {
-        Self::internal_normalize(path,true)
+    fn checked_normalize(path: &str) -> Result<NeutralPath, PathError> {
+        Self::internal_normalize(path, true)
     }
 
     fn unchecked_normalize(path: &NeutralPath) -> NeutralPath {
         // skip check for invalid path component
-        Self::internal_normalize(&path.0,false).unwrap()
+        Self::internal_normalize(&path.0, false).unwrap()
     }
 
     pub fn new<S: AsRef<str>>(s: S) -> Result<Self, PathError> {
         let s = s.as_ref();
 
-        if s.is_empty(){
+        if s.is_empty() {
             return Err(PathError::EmptyPath);
         }
 
@@ -227,7 +225,7 @@ impl NeutralPath{
         let part_str = part.as_ref();
         Self::check_if_absolute(part_str)?;
 
-        let mut all_parts:StackString = StackString::new();
+        let mut all_parts: StackString = StackString::new();
         all_parts.push(&self.0);
         all_parts.push(part_str);
 
@@ -235,7 +233,7 @@ impl NeutralPath{
     }
 
     pub fn join_all<P: AsRef<str>>(&self, parts: &[P]) -> Result<Self, PathError> {
-        let mut all_parts:StackString = StackString::new();
+        let mut all_parts: StackString = StackString::new();
 
         all_parts.push(&self.0);
 
@@ -253,19 +251,17 @@ impl NeutralPath{
     }
 
     pub fn filename(&self) -> Option<&str> {
-        if let Some((_,filename)) = self.0.rsplit_once('/') {
-            if filename == "." || filename == ".." { // in case of ../..
+        if let Some((_, filename)) = self.0.rsplit_once('/') {
+            if filename == "." || filename == ".." {
+                // in case of ../..
                 None
-            }
-            else{
+            } else {
                 Some(filename)
             }
-        }
-        else{
+        } else {
             if self.0 == "." || self.0 == ".." {
                 None
-            }
-            else{
+            } else {
                 Some(&self.0)
             }
         }
@@ -273,14 +269,12 @@ impl NeutralPath{
 
     pub fn extname(&self) -> Option<&str> {
         if let Some(filename) = self.filename() {
-            if let Some((_,ext)) = filename.rsplit_once('.') {
+            if let Some((_, ext)) = filename.rsplit_once('.') {
                 Some(ext)
-            }
-            else{
+            } else {
                 None
             }
-        }
-        else{
+        } else {
             None
         }
     }
@@ -296,7 +290,9 @@ impl NeutralPath{
         let mut common_length = 0;
         let max_common_length = std::cmp::min(from_parts.len(), to_parts.len());
 
-        while common_length < max_common_length && from_parts[common_length] == to_parts[common_length] {
+        while common_length < max_common_length
+            && from_parts[common_length] == to_parts[common_length]
+        {
             common_length += 1;
         }
 

@@ -7,6 +7,7 @@ use color_eyre::owo_colors::OwoColorize;
 use const_format::concatcp;
 use opentelemetry::trace::TracerProvider;
 use shadow_rs::{Format, shadow};
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 use std::{env, io};
@@ -56,6 +57,7 @@ const AFTER_HELP: &'static str = concatcp!(
     bin_name = env!("CARGO_BIN_NAME"),
     author = env!("CARGO_PKG_AUTHORS"),
     version = env!("CARGO_PKG_VERSION"),
+    flatten_help = true,
     propagate_version = true,
     about = ABOUT,
     long_about = ABOUT,
@@ -147,12 +149,56 @@ enum SubCommands {
     GenerateComplete(GenerateCompleteArgs),
     ExportBuiltin(ExportBuiltinArgs),
     Make(MakeArgs),
+    Deno(DenoArgs),
+}
+
+#[derive(clap::Args, Debug)]
+#[command(
+    name = "deno",
+    about = "Execute deno command, relay following arguments to deno"
+)]
+struct DenoArgs {}
+
+static DENO_BINARY: &[u8] = include_bytes!("deno/deno");
+
+fn run_deno(args: &[std::ffi::OsString]) -> eyre::Result<()> {
+    let checksum = include_str!("deno/deno.sha256sum").trim();
+
+    let (checksum, _) = checksum
+        .split_once(" ")
+        .ok_or(eyre::eyre!("failed to split checksum of deno"))?;
+
+    let deno_exe = env::temp_dir().join(format!("{}-{}-{}.exe", "zmake", "deno", checksum));
+
+    if !std::fs::exists(&deno_exe)? {
+        let mut file = std::fs::File::create(&deno_exe)?;
+        file.write_all(&DENO_BINARY)?;
+        #[cfg(unix)]
+        {
+            use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+            file.set_permissions(Permissions::from_mode(0o755))?;
+        }
+    }
+
+    let status = std::process::Command::new(&deno_exe).args(args).status()?;
+
+    if !status.success() {
+        return Err(eyre::eyre!(
+            "failed to execute deno command(exit code: {})",
+            status
+                .code()
+                .map(|x| x.to_string())
+                .unwrap_or("unknown".to_string())
+        ));
+    }
+
+    Ok(())
 }
 
 #[derive(clap::Args, Debug)]
 #[command(
     name = "export-builtin",
-    about = "export builtin typescript variable to file or stdout"
+    about = "Export builtin typescript variable to file or stdout"
 )]
 struct ExportBuiltinArgs {
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
@@ -160,18 +206,17 @@ struct ExportBuiltinArgs {
 }
 
 impl ExportBuiltinArgs {
-    pub fn invoke(self) {
+    pub fn invoke(self) -> eyre::Result<()> {
         let builtins = zmake_lib::builtin::construct_builtins_typescript_export();
 
-        if self.output_file.is_none() {
-            println!("{}", builtins);
+        if let Some(output_file) = self.output_file {
+            let mut output_file = File::create(output_file)?;
+
+            output_file.write_all(builtins.as_bytes())?;
         } else {
-            let output_file = self.output_file.unwrap();
-
-            let mut output_file = File::create(output_file).unwrap();
-
-            output_file.write_all(builtins.as_bytes()).unwrap();
+            println!("{}", builtins);
         }
+        Ok(())
     }
 }
 
@@ -186,12 +231,14 @@ struct MakeArgs {
 }
 
 impl MakeArgs {
-    pub fn invoke(self) {
+    pub fn invoke(self) -> eyre::Result<()> {
         let concurrency = self.concurrency.unwrap_or(num_cpus::get());
 
-        let builder = Builder::new_multi_thread().build().unwrap();
+        let builder = Builder::new_multi_thread().build()?;
 
-        info!("use concurrency {}", concurrency)
+        info!("use concurrency {}", concurrency);
+
+        Ok(())
     }
 }
 
@@ -217,13 +264,13 @@ struct GenerateCompleteArgs {
     output_file: Option<String>,
 }
 impl GenerateCompleteArgs {
-    pub fn invoke(self) {
+    pub fn invoke(self) -> eyre::Result<()> {
         let mut command = Args::command();
 
         let bin_name = self.bin_name;
 
         let mut output: Box<dyn Write> = if let Some(file) = self.output_file {
-            Box::new(File::open(file).unwrap())
+            Box::new(File::open(file)?)
         } else {
             Box::new(io::stdout())
         };
@@ -245,6 +292,7 @@ impl GenerateCompleteArgs {
                 generate(shells::Zsh, &mut command, bin_name, &mut output);
             }
         }
+        Ok(())
     }
 }
 
@@ -253,7 +301,7 @@ shadow!(build_information);
 #[command(name = "information", about = "Print (debug) information about zmake")]
 struct InformationArgs {}
 impl InformationArgs {
-    pub fn invoke(self) {
+    pub fn invoke(self) -> eyre::Result<()> {
         let local_time = shadow_rs::DateTime::now().human_format();
         println!("build local time:{local_time}");
         println!("is_debug:{}", shadow_rs::is_debug());
@@ -304,6 +352,8 @@ impl InformationArgs {
             "{}",
             zmake_lib::builtin::construct_builtins_typescript_export()
         );
+
+        Ok(())
     }
 }
 
@@ -356,7 +406,7 @@ fn setup_backtrace_env(enable_backtrace: bool) {
     }
 }
 
-fn inner_main() -> i32 {
+fn inner_main() -> eyre::Result<()> {
     let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_simple_exporter(opentelemetry_stdout::SpanExporter::default()) // TODO: send information to remote
         .build();
@@ -367,7 +417,7 @@ fn inner_main() -> i32 {
 
     let subscriber = Registry::default().with(telemetry);
 
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+    tracing::subscriber::set_global_default(subscriber)?;
 
     let _span = trace_span!("zmake start", version = env!("CARGO_PKG_VERSION")).entered();
 
@@ -375,7 +425,13 @@ fn inner_main() -> i32 {
 
     let args = env::args_os();
 
-    let args = argfile::expand_args_from(args, argfile::parse_fromfile, argfile::PREFIX).unwrap();
+    let args = argfile::expand_args_from(args, argfile::parse_fromfile, argfile::PREFIX)?;
+
+    if let Some(cmd) = args.iter().nth(1)
+        && cmd.to_str().unwrap_or("") == "deno"
+    {
+        return run_deno(&args[2..]);
+    }
 
     let args = Args::parse_from(args);
 
@@ -425,16 +481,15 @@ fn inner_main() -> i32 {
     }
     */
 
-    match args.command {
+    return match args.command {
         SubCommands::Information(args) => args.invoke(),
         SubCommands::GenerateComplete(args) => args.invoke(),
         SubCommands::Make(args) => args.invoke(),
         SubCommands::ExportBuiltin(args) => args.invoke(),
-    }
-
-    return exit_code::SUCCESS;
+        SubCommands::Deno(_args) => unreachable!(),
+    };
 }
 
 pub fn main() {
-    ::std::process::exit(inner_main());
+    ::std::process::exit(inner_main().map(|_x| exit_code::SUCCESS).unwrap());
 }
