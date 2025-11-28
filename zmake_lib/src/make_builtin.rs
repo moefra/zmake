@@ -1,5 +1,5 @@
 #[macro_export]
-macro_rules! make_builtin {
+macro_rules! make_builtin_id {
     {
         $( pub mod $submodule:ident; )*
         self => { $($id:literal => { $($type:ident => { $($key:ident => $value:literal),* }),* } ),* }
@@ -70,4 +70,36 @@ macro_rules! make_builtin {
             map
         };
     }
+}
+
+pub type Syscall = for<'s, 'i> fn(
+    &mut ::v8::PinScope<'s, 'i>,
+    ::v8::FunctionCallbackArguments<'s>,
+    ::v8::ReturnValue<'s, ::v8::Value>,
+);
+
+#[macro_export]
+macro_rules! make_builtin_js {
+    { $( pub fn $method:ident ($scope:ident,$args:ident,$return_value:ident) => $block:block)* } => {
+        $(
+            #[allow(unused_mut)]
+            #[allow(unused_variables)]
+            pub fn $method<'s, 'i>(
+                $scope: &mut ::v8::PinScope<'s, 'i>,
+                $args: ::v8::FunctionCallbackArguments<'s>,
+                mut $return_value: ::v8::ReturnValue<'s, v8::Value>,
+            ) $block
+        )*
+
+        #[::static_init::dynamic(lazy)]
+        pub static BUILTIN: ::std::collections::BTreeMap<::std::string::String, $crate::make_builtin::Syscall> = {
+            let mut map = ::std::collections::BTreeMap::<::std::string::String, $crate::make_builtin::Syscall>::new();
+
+            $(
+                map.insert(::std::format!("{}{}","__zmake_syscall_",::std::stringify!($method)), $method as $crate::make_builtin::Syscall).unwrap();
+            )*
+
+            map
+        };
+    };
 }

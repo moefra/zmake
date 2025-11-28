@@ -9,8 +9,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{cell::RefCell, rc::Rc};
 use thiserror::Error;
+use tracing::error;
 use v8::script_compiler::Source;
-use v8::{CallbackScope, ContextScope, callback_scope};
+use v8::{CallbackScope, ContextScope, FunctionCallback, callback_scope};
 use v8::{
     Data, FixedArray, Global, Handle, Local, PinScope, Promise, PromiseResolver, ScriptOrigin,
     Value,
@@ -47,8 +48,22 @@ pub enum ModuleLoadError {
     },
     #[error("Invalid module path: {0}")]
     PathError(#[from] crate::path::PathError),
+    #[error("Invalid io operation: {0}")]
+    IoError(#[from] std::io::Error),
     #[error("Sandbox error: {0}")]
     SandboxError(#[from] SandboxError),
+    #[error(
+        "Failed to allocate V8 object. It may because v8 run out of memory or the object is too large:{0}"
+    )]
+    V8ObjectAllocationError(&'static str),
+    #[error("Failed to compile module: {0}")]
+    V8CompileError(String),
+    #[error("Failed to instantiate and evaluate module: {0:?}")]
+    V8InstaniateAndEvaluateError(ModuleSpecifier),
+    #[error("Failed to find resolved module specifier: {0:?}")]
+    UnknownModuleSpecifier(ModuleSpecifier),
+    #[error("Failed to find builtin module: {0}")]
+    UnknownBuiltinModuleSpecifier(String),
 }
 
 impl ModuleLoader {
@@ -119,18 +134,26 @@ impl ModuleLoader {
         self: &Rc<Self>,
         scope: &PinScope<'s, 'i>,
         specifier: &ModuleSpecifier,
-    ) -> Option<Local<'s, v8::Module>> {
+    ) -> Result<Local<'s, v8::Module>, ModuleLoadError> {
         let module = if let Some(global_mod) = self.module_cache.borrow().get(specifier) {
             Local::new(scope, global_mod)
         } else {
             match specifier {
-                ModuleSpecifier::Builtin(builtin_name) => {
-                    todo!();
-                }
+                ModuleSpecifier::Builtin(builtin_name) => match builtin_name.as_str() {
+                    _ => {
+                        return Err(ModuleLoadError::UnknownBuiltinModuleSpecifier(
+                            builtin_name.clone(),
+                        ));
+                    }
+                },
                 ModuleSpecifier::File(path_buf) => {
-                    let source_code = std::fs::read_to_string(path_buf).ok()?;
+                    let source_code = std::fs::read_to_string(path_buf)?;
 
-                    let v8_source = v8::String::new(scope, &source_code).unwrap();
+                    let v8_source = v8::String::new(scope, &source_code).ok_or(
+                        ModuleLoadError::V8ObjectAllocationError(
+                            "v8::String::new(scope, &source_code)",
+                        ),
+                    )?;
 
                     let origin = ScriptOrigin::new(
                         scope,
@@ -152,7 +175,9 @@ impl ModuleLoader {
                         scope,
                         &mut Source::new(v8_source, Some(&origin)),
                     )
-                    .unwrap();
+                    .ok_or_else(|| {
+                        ModuleLoadError::V8CompileError(path_buf.to_string_lossy().to_string())
+                    })?;
 
                     let global_mod = v8::Global::new(scope, module);
 
@@ -165,13 +190,13 @@ impl ModuleLoader {
 
                     module
                 }
-                _ => return None,
+                _ => return Err(ModuleLoadError::UnknownModuleSpecifier(specifier.clone())),
             }
         };
 
         let module = Local::new(scope, module);
 
-        Some(module)
+        Ok(module)
     }
 
     pub fn instantiate_and_evaluate_module<'s, 'i>(
@@ -179,28 +204,23 @@ impl ModuleLoader {
         scope: &PinScope<'s, 'i>,
         module: &Local<v8::Module>,
     ) -> Option<Local<'s, v8::Value>> {
-        loop {
-            match module.get_status() {
-                v8::ModuleStatus::Uninstantiated => {
-                    module.instantiate_module(scope, Self::resolve_module_hook)?;
-                }
-                v8::ModuleStatus::Instantiating => {
-                    unreachable!()
-                }
-                v8::ModuleStatus::Instantiated => {
-                    return module.evaluate(scope);
-                }
-                v8::ModuleStatus::Evaluating => {
-                    unreachable!()
-                }
-                v8::ModuleStatus::Evaluated => {
-                    return Some(module.get_module_namespace());
-                }
-                v8::ModuleStatus::Errored => {
-                    return None;
-                }
+        if module.get_status() == v8::ModuleStatus::Uninstantiated {
+            if !module.instantiate_module(scope, Self::resolve_module_hook)? {
+                return None;
             }
         }
+
+        if module.get_status() == v8::ModuleStatus::Instantiated {
+            let result = module.evaluate(scope)?;
+
+            return Some(result);
+        }
+
+        if module.get_status() == v8::ModuleStatus::Evaluated {
+            return Some(module.get_module_namespace());
+        }
+
+        None
     }
 
     fn resolve_module_hook<'s, 'i>(
@@ -211,19 +231,43 @@ impl ModuleLoader {
     ) -> Option<v8::Local<'s, v8::Module>> {
         callback_scope!(unsafe scope, context);
 
-        let loader = scope.get_slot::<Rc<ModuleLoader>>()?;
+        let loader = match scope.get_slot::<Rc<ModuleLoader>>() {
+            Some(loader) => loader,
+            None => {
+                error!("failed to get module loader from slot");
+                return None;
+            }
+        };
 
         let referer = {
             let global_referrer = v8::Global::new(scope, referrer);
-            loader.module_map.borrow().get(&global_referrer)?.clone()
+            match loader.module_map.borrow().get(&global_referrer) {
+                Some(module) => module.clone(),
+                None => {
+                    error!("failed to get loaded module from module map");
+                    return None;
+                }
+            }
         };
 
         let specifier = specifier.to_rust_string_lossy(scope);
         let specifier = ModuleSpecifier::from(specifier);
 
-        let resolved = loader.resolve_module_specifier(&referer, &specifier).ok()?;
+        let resolved = match loader.resolve_module_specifier(&referer, &specifier) {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                error!("failed to resolve module specifier: {}", err);
+                return None;
+            }
+        };
 
-        loader.resolve_module(scope, &resolved)
+        match loader.resolve_module(scope, &resolved) {
+            Ok(module) => Some(module),
+            Err(err) => {
+                error!("failed to resolve module: {}", err);
+                None
+            }
+        }
     }
 
     fn load_module_async_hook<'s, 'i>(
@@ -233,36 +277,71 @@ impl ModuleLoader {
         specifier: Local<'s, v8::String>,
         import_attributes: Local<'s, FixedArray>,
     ) -> Option<Local<'s, Promise>> {
-        let loader = scope.get_slot::<Rc<ModuleLoader>>()?;
+        let loader = match scope.get_slot::<Rc<ModuleLoader>>() {
+            Some(loader) => loader,
+            None => {
+                error!("failed to get module loader from slot");
+                return None;
+            }
+        };
 
         let referer = ModuleSpecifier::from(resource_name.to_rust_string_lossy(scope));
         let specifier = specifier.to_rust_string_lossy(scope);
         let specifier = ModuleSpecifier::from(specifier);
 
-        let resolved = loader.resolve_module_specifier(&referer, &specifier).ok()?;
+        let resolved = match loader.resolve_module_specifier(&referer, &specifier) {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                error!("failed to resolve module specifier: {}", err);
+                return None;
+            }
+        };
 
-        let module = loader.resolve_module(scope, &resolved)?;
+        let module = match loader.resolve_module(scope, &resolved) {
+            Ok(module) => module,
+            Err(err) => {
+                error!("failed to resolve module: {}", err);
+                return None;
+            }
+        };
 
-        let module = loader.instantiate_and_evaluate_module(scope, &module)?;
+        let module = match loader.instantiate_and_evaluate_module(scope, &module) {
+            Some(module) => module,
+            None => {
+                error!(
+                    "failed to instantiate and evaluate module: specifier {}, request from {}",
+                    specifier.to_string(),
+                    resource_name.to_rust_string_lossy(scope)
+                );
+                return None;
+            }
+        };
 
         let resolver = PromiseResolver::new(scope).unwrap();
 
-        resolver.resolve(scope, module)?;
+        match resolver.resolve(scope, module) {
+            Some(_) => (),
+            None => {
+                error!("failed to resolve PromiseResolver");
+                return None;
+            }
+        };
 
         Some(resolver.get_promise(scope))
     }
 
-    pub fn execute_module<'s, 'i, P: AsRef<ModuleSpecifier>>(
+    pub fn execute_module<'s, 'i>(
         self: Rc<Self>,
         scope: &mut PinScope<'s, 'i>,
-        module_specifier: &P,
-    ) -> Result<Local<'s, v8::Value>, ()> {
+        module_specifier: impl AsRef<ModuleSpecifier>,
+    ) -> Result<Local<'s, v8::Value>, ModuleLoadError> {
         let module_specifier = module_specifier.as_ref();
 
-        let module = self.resolve_module(scope, module_specifier).ok_or(())?;
-        let module = self
-            .instantiate_and_evaluate_module(scope, &module)
-            .unwrap();
+        let module = self.resolve_module(scope, module_specifier)?;
+
+        let module = self.instantiate_and_evaluate_module(scope, &module).ok_or(
+            ModuleLoadError::V8InstaniateAndEvaluateError(module_specifier.clone()),
+        )?;
 
         Ok(module)
     }

@@ -238,7 +238,7 @@ struct ExportBuiltinArgs {
 
 impl ExportBuiltinArgs {
     pub fn invoke(self) -> eyre::Result<()> {
-        let builtins = zmake_lib::builtin::construct_builtins_typescript_export();
+        let builtins = zmake_lib::builtin::id::construct_builtins_typescript_export();
 
         if let Some(output_file) = self.output_file {
             let mut output_file = File::create(output_file)?;
@@ -382,7 +382,7 @@ impl InformationArgs {
 
         println!(
             "{}",
-            zmake_lib::builtin::construct_builtins_typescript_export()
+            ::zmake_lib::builtin::id::construct_builtins_typescript_export()
         );
 
         Ok(())

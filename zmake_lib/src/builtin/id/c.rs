@@ -1,6 +1,6 @@
-use crate::make_builtin;
+use crate::make_builtin_id;
 
-make_builtin! {
+make_builtin_id! {
     self => {
         "moe.kawayi:zmake@1.0.0" => {
             ToolType =>

@@ -1,18 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Hash, Eq, PartialEq)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+#[serde(rename_all(serialize = "lowercase", deserialize = "lowercase"))]
 #[serde(untagged)]
 pub enum Visibility {
-    VisibleToArtifact { visible_to_artifact: Vec<String> },
-    VisibleToFile { visible_to_file: Vec<String> },
-    VisibleToDir { visible_to_dir: Vec<String> },
+    Restricted(Vec<String>),
     Private,
     Public,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, Eq, PartialEq)]
-#[serde(untagged)]
+#[serde(rename_all = "lowercase")]
 pub enum TransitiveLevel {
     Interface,
     Public,

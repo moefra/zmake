@@ -11,21 +11,22 @@ mod extension;
 pub mod file_finder;
 pub mod fs;
 pub mod id;
-pub mod sandbox;
 mod local_cas;
 mod make_builtin;
 mod module_loader;
+mod module_specifier;
+pub mod path;
+pub mod pattern;
 mod platform;
 pub mod project;
 pub mod project_resolver;
+pub mod sandbox;
 pub mod socket_address;
 pub mod target;
 mod tool;
 mod transformer;
 mod transport_server;
 pub mod version_extractor;
-pub mod path;
-mod module_specifier;
 
 pub mod proto {
     pub mod digest {

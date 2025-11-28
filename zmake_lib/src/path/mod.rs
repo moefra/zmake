@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::string::String;
 use thiserror::Error;
 
@@ -10,13 +10,13 @@ type StackString<'a> = smallvec::SmallVec<[&'a str; 8]>;
 ///
 /// 内部保证：
 ///
-/// - 总是使用 '/' 作为分隔符。
-/// - 不包含多余的 `.` 或 `..` 组件，除非路径本身就是 `..` 开头或者路径只有 `.`。
-/// - 所有路径在Unix或者Windows上都合法.
-/// - 不包含多余的/分隔符.
-/// - 不包含绝对路径前缀。
-/// - 不包含诸如C:之类的驱动器前缀。
-/// - 是有效的 UTF-8 字符串。
+/// - 总是使用 '/' 作为分隔符
+/// - 不包含多余的 `.` 或 `..` 组件，除非路径本身就是 `..` 开头或者路径只有 `.`
+/// - 所有路径在Unix或者Windows上都合法
+/// - 不包含多余的/分隔符
+/// - 不包含绝对路径前缀
+/// - 不包含诸如C:之类的驱动器前缀
+/// - 是有效的 UTF-8 字符串
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct NeutralPath(String);
@@ -29,6 +29,8 @@ pub enum PathError {
     InvalidFormat(&'static str),
     #[error("Invalid path character: {0}")]
     InvalidCharacter(&'static str),
+    #[error("Invalid unicode data detected")]
+    InvalidUnicodeData(),
     #[error(
         "Path is absolute, but a relative path is required for zmake::path::NeutralPath to construct or join"
     )]
@@ -62,6 +64,23 @@ impl AsRef<Path> for NeutralPath {
 impl AsRef<NeutralPath> for NeutralPath {
     fn as_ref(&self) -> &NeutralPath {
         &self
+    }
+}
+
+impl TryFrom<&str> for NeutralPath {
+    type Error = PathError;
+
+    fn try_from(path: &str) -> Result<Self, Self::Error> {
+        NeutralPath::new(path)
+    }
+}
+
+impl TryFrom<&Path> for NeutralPath {
+    type Error = PathError;
+
+    fn try_from(path: &Path) -> Result<Self, Self::Error> {
+        let path = path.to_str().ok_or(Self::Error::InvalidUnicodeData())?;
+        NeutralPath::new(path)
     }
 }
 
@@ -104,7 +123,7 @@ impl NeutralPath {
 
     fn check_path_name_is_valid(part: &str) -> Result<(), PathError> {
         // limitation from unix
-        if (part.contains('\0')) {
+        if part.contains('\0') {
             return Err(PathError::InvalidCharacter("\\0"));
         }
 

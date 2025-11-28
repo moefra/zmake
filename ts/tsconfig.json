@@ -1,0 +1,16 @@
+{
+    "compilerOptions": {
+        "allowJs": false,
+        "checkJs": false,
+        "strict": true,
+        "noEmit": true,
+        "allowImportingTsExtensions": true,
+        "alwaysStrict": true,
+        "target": "ES2023",
+        "module": "ES2022",
+        "typeRoots": ["../types/"],
+        "types": [],
+        "newLine": "lf",
+        "erasableSyntaxOnly": true
+    }
+}

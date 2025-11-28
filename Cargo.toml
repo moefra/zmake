@@ -83,7 +83,7 @@ async-trait = "0.1.89"
 shadow-rs = "1.4"
 clap_complete = "4.5.61"
 
-reqwest = { version = "0.12", features = ["json","blocking","json","gzip","brotli","zstd","deflate","stream"] }
+reqwest = { version = "0.12", features = ["json","blocking","json","gzip","brotli","zstd","deflate","stream","socks","default-tls","native-tls"] }
 indicatif = "0.18.3"
 
 prost = "0.14"

@@ -1,5 +1,4 @@
-
-declare module "zmake"{
+declare module "zmake:core" {
     /**
      * core version string of semver 2.0
      *
@@ -15,7 +14,8 @@ declare module "zmake"{
      *
      * including version core, prerelease and build.
      */
-    export type Version = `${VersionCore}${PreRelease | ""}${BuildVersion | ""}`;
+    export type Version =
+        `${VersionCore}${PreRelease | ""}${BuildVersion | ""}`;
 
     export type GroupId = `${string}`;
     export type ArtifactId = `${GroupId}:${string}`;
@@ -53,30 +53,44 @@ declare module "zmake"{
      */
     export type ToolName = Id<"tool_name">;
 
-    export function requireZMakeVersion(version:Version):void;
+    export function requireZMakeVersion(version: Version): void;
 
-    export interface Artifact{
-        name : ArtifactId,
-        version : Version,
-    }
-
-    export type visibility =
-        "public" |
-        "private"|
-        {visibleToDir:[string]} |
-        {visibleToFile:[string]} |
-        {visibleToArtifact:[ArtifactId]};
+    export type visibility = "public" | "private" | string[];
 
     export type transitiveLevel = "public" | "private" | "interface";
 
     /**
+     * git style author sign
+     */
+    type Author = `${string} <${string}@${string}>`;
+
+    /**
      * project.zmake
      */
-    export interface ProjectConfiguration {
-        commands:[string],
-        scripts:[string],
-        build_files:[string]
+    export interface ProjectMeta {
+        group: GroupId;
+        artifact: string;
+        version: Version;
+        description?: string;
+        license?: string;
+        authors?: Author[];
     }
 
-    export function addCLibrary(artifact:Artifact):Target;
+    /**
+     * A pattern to include and exclude files.
+     *
+     * If there is a string array, it will be treated as a list of files to include.
+     */
+    export type Pattern =
+        | {
+              include?: string[];
+              exclude?: string[];
+          }
+        | string[];
+
+    export function trace(message: string): void;
+    export function debug(message: string): void;
+    export function log(message: string): void;
+    export function warn(message: string): void;
+    export function error(message: string): void;
 }

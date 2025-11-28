@@ -25,13 +25,8 @@ use oxc::parser::Parser;
 use oxc::semantic::SemanticBuilder;
 use oxc::span::SourceType;
 use oxc::transformer::{TransformOptions, Transformer};
-use std::ffi::CStr;
-use std::ffi::CString;
 
-pub fn transform_typescript(
-    source_code: &str,
-    source_name: &str,
-) -> Result<String,String> {
+pub fn transform_typescript(source_code: &str, source_name: &str) -> Result<String, String> {
     let allocator = Allocator::new();
 
     let path = Path::new(source_name);

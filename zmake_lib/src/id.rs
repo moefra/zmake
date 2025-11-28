@@ -255,6 +255,7 @@ pub enum IdType {
     Property,
 }
 
+/// This look like `com.group.id:artifact_name@1.0.0#id_type::path/to/target`
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Id {
     artifact_id: QualifiedArtifactId,

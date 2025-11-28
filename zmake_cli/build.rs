@@ -1,9 +1,12 @@
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::Response;
+use sha2::{Digest, Sha256};
 use shadow_rs::BuildPattern;
 use shadow_rs::ShadowBuilder;
 use std::env;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 
 async fn download(url: String, destination: std::path::PathBuf) -> eyre::Result<()> {
@@ -11,6 +14,7 @@ async fn download(url: String, destination: std::path::PathBuf) -> eyre::Result<
 
     let total_size = response.content_length().unwrap_or(0);
 
+    // the should not showed in cmdline because of cargo but I thought it was a good idea to show it
     let pb = ProgressBar::new(total_size);
     pb.set_style(ProgressStyle::default_bar()
             .template("{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
@@ -28,7 +32,7 @@ async fn download(url: String, destination: std::path::PathBuf) -> eyre::Result<
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         downloaded += chunk.len() as u64;
-        target.write(&chunk);
+        target.write_all(&chunk)?;
         pb.set_position(downloaded);
     }
     pb.finish_with_message("Download complete!");
@@ -65,18 +69,32 @@ async fn download_deno() -> eyre::Result<()> {
     let checksum = std::path::PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"))
         .join("deno.sha256sum");
 
+    if !std::fs::exists(&checksum)? {
+        download(checksum_url, checksum.clone()).await?;
+    }
+
+    let checksum = std::fs::read_to_string(&checksum)?;
+    let (checksum, _) = checksum
+        .split_once(" ")
+        .ok_or(eyre::eyre!("failed to splite checksum file"))?;
+
     if !std::fs::exists(&bin)? {
         download(zip_url, zip.clone()).await?;
 
-        let zip = std::fs::File::open(zip).unwrap();
+        let mut zip = std::fs::File::open(zip).unwrap();
+
+        let mut data = Vec::new();
+        let len = zip.read_to_end(&mut data)?;
+        zip.seek(SeekFrom::Start(0))?;
+
+        let digest = Sha256::digest(&data[0..len]);
+        if hex::encode(digest) != checksum {
+            eyre::bail!("checksum mismatch");
+        }
 
         let mut archive = zip::ZipArchive::new(zip).unwrap();
 
         archive.extract(env::var("OUT_DIR").expect("OUT_DIR not set"))?;
-    }
-
-    if !std::fs::exists(&checksum)? {
-        download(checksum_url, checksum).await?;
     }
 
     Ok(())
