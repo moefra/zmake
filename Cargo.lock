@@ -3864,6 +3864,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-tree"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac87aa03b6a4d5a7e4810d1a80c19601dbe0f8a837e9177f23af721c7ba7beec"
+dependencies = [
+ "nu-ansi-term",
+ "tracing-core",
+ "tracing-log",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4629,8 +4641,10 @@ dependencies = [
  "strum",
  "tokio",
  "tracing",
+ "tracing-error",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "tracing-tree",
  "zip",
  "zmake-lib",
 ]
@@ -4674,6 +4688,7 @@ dependencies = [
  "tracing",
  "tracing-attributes",
  "tracing-core",
+ "tracing-error",
  "tracing-subscriber",
  "unicode-ident",
  "url",

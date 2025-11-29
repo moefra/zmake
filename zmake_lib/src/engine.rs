@@ -60,7 +60,7 @@ impl Engine {
                 module_loader: loader,
             };
 
-            context.set_slot(Rc::from(state));
+            context.set_slot::<State>(Rc::from(state));
 
             Global::new(scope, context)
         };
@@ -82,7 +82,7 @@ impl Engine {
         let mut scope = scope.init();
         let context = Local::new(&scope, context);
 
-        let state = context.get_slot::<Rc<State>>().unwrap();
+        let state = context.get_slot::<State>().unwrap();
 
         let mut scope = &mut v8::ContextScope::new(&mut scope, context);
 

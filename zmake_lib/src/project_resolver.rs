@@ -1,9 +1,11 @@
 use crate::engine::Engine;
+use crate::module_specifier::ModuleSpecifier;
 use crate::project::ProjectExported;
 use crate::project_resolver::ProjectResolveError::{
     CircularDependency, FileNotExists, IOError, NotAFile,
 };
 use ahash::AHashMap;
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -26,22 +28,22 @@ pub enum ProjectResolveError {
 #[derive(Debug)]
 pub struct ProjectResolver {
     engine: Engine,
-    result: AHashMap<PathBuf, ProjectExported>,
-    resolving: AHashMap<PathBuf, bool>,
+    result: RefCell<AHashMap<PathBuf, ProjectExported>>,
+    resolving: RefCell<AHashMap<PathBuf, bool>>,
 }
 
 impl ProjectResolver {
-    pub fn new(engine: Engine) -> Rc<Self> {
-        Rc::from(ProjectResolver {
+    pub fn new(engine: Engine) -> Self {
+        ProjectResolver {
             engine,
-            result: AHashMap::default(),
-            resolving: AHashMap::default(),
-        })
+            result: RefCell::new(AHashMap::default()),
+            resolving: RefCell::new(AHashMap::default()),
+        }
     }
 
     #[instrument]
     pub fn resolve_project(
-        mut self: Rc<Self>,
+        self: &Self,
         project_file_path: String,
     ) -> Result<(), ProjectResolveError> {
         let file = fs::canonicalize(project_file_path)?;
@@ -54,18 +56,20 @@ impl ProjectResolver {
             return Err(NotAFile(file));
         }
 
-        if let Some(status) = self.resolving.get(&file) {
+        if let Some(status) = self.resolving.borrow_mut().get(&file) {
             return if *status {
                 Err(CircularDependency(file))
             } else {
                 Ok(())
             };
         } else {
-            Rc::get_mut(&mut self)
-                .expect("unsafe to get mut")
-                .resolving
-                .insert(file.clone(), true);
+            self.resolving.borrow_mut().insert(file.clone(), true);
         }
+
+        self.engine
+            .execute_module(&ModuleSpecifier::File(file.clone()));
+
+        self.resolving.borrow_mut().insert(file, false);
 
         Ok(())
     }

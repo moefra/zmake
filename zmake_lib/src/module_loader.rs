@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::{cell::RefCell, rc::Rc};
 use thiserror::Error;
 use tracing::error;
+use tracing::trace_span;
 use v8::callback_scope;
 use v8::script_compiler::Source;
 use v8::{Data, FixedArray, Local, PinScope, Promise, PromiseResolver, ScriptOrigin, Value};
@@ -31,13 +32,13 @@ pub struct ModuleLoader {
 
 #[derive(Error, Debug)]
 pub enum ModuleLoadError {
-    #[error("Not found module: `{specifier:?}` imported from `{referer:?}`")]
+    #[error("Not found module: `{specifier:?}` referer `{referer:?}`")]
     NotFound {
         referer: ModuleSpecifier,
         specifier: ModuleSpecifier,
     },
     #[error(
-        "Can not load memory module or load esm file from memory/builtin/import-map esm: `{specifier}` imported from `{referer}`"
+        "Can not load memory module or load esm file from memory/builtin/import-map esm:`{specifier}` referer `{referer}`"
     )]
     NotSupported {
         referer: ModuleSpecifier,
@@ -82,8 +83,8 @@ impl ModuleLoader {
     /// Resolve path
     fn resolve_module_specifier(
         self: &Self,
-        specifier: &ModuleSpecifier,
         referrer: &ModuleSpecifier,
+        specifier: &ModuleSpecifier,
     ) -> Result<ModuleSpecifier, ModuleLoadError> {
         match specifier.clone() {
             ModuleSpecifier::Builtin(builtin) => Ok(ModuleSpecifier::Builtin(builtin)),
@@ -179,7 +180,7 @@ impl ModuleLoader {
                             scope,
                             v8::String::new(scope, specifier.to_string().as_ref()).ok_or(
                                 ModuleLoadError::V8ObjectAllocationError(
-                                    "v8::String::new(scope, &crate::builtin::js::RT_CODE)",
+                                    "v8::String::new(scope, &crate::builtin::js::SYSCALL)",
                                 ),
                             )?,
                             builtin::js::get_exports(scope)?.as_slice(),
@@ -260,17 +261,22 @@ impl ModuleLoader {
     ) -> Option<v8::Local<'s, v8::Module>> {
         callback_scope!(unsafe scope, context);
 
-        let loader = match scope.get_slot::<Rc<ModuleLoader>>() {
-            Some(loader) => loader,
+        let state = match scope.get_current_context().get_slot::<State>() {
+            Some(state) => state,
             None => {
-                error!("failed to get module loader from slot");
+                error!("failed to get state from slot");
                 return None;
             }
         };
 
         let referer = {
             let global_referrer = v8::Global::new(scope, referrer);
-            match loader.module_map.borrow().get(&global_referrer) {
+            match state
+                .module_loader
+                .module_map
+                .borrow()
+                .get(&global_referrer)
+            {
                 Some(module) => module.clone(),
                 None => {
                     error!("failed to get loaded module from module map");
@@ -282,7 +288,10 @@ impl ModuleLoader {
         let specifier = specifier.to_rust_string_lossy(scope);
         let specifier = ModuleSpecifier::from(specifier);
 
-        let resolved = match loader.resolve_module_specifier(&referer, &specifier) {
+        let resolved = match state
+            .module_loader
+            .resolve_module_specifier(&referer, &specifier)
+        {
             Ok(resolved) => resolved,
             Err(err) => {
                 error!("failed to resolve module specifier: {}", err);
@@ -290,7 +299,7 @@ impl ModuleLoader {
             }
         };
 
-        match loader.resolve_module(scope, &resolved) {
+        match state.module_loader.resolve_module(scope, &resolved) {
             Ok(module) => Some(module),
             Err(err) => {
                 error!("failed to resolve module: {}", err);
@@ -306,7 +315,7 @@ impl ModuleLoader {
         specifier: Local<'s, v8::String>,
         import_attributes: Local<'s, FixedArray>,
     ) -> Option<Local<'s, Promise>> {
-        let state = match scope.get_current_context().get_slot::<Rc<State>>() {
+        let state = match scope.get_current_context().get_slot::<State>() {
             Some(state) => state,
             None => {
                 error!("failed to get state from slot");
@@ -370,6 +379,12 @@ impl ModuleLoader {
         scope: &mut PinScope<'s, 'i>,
         module_specifier: impl AsRef<ModuleSpecifier>,
     ) -> Result<Local<'s, v8::Value>, ModuleLoadError> {
+        let span = trace_span!(
+            "execute module: {module_specifier}",
+            module_specifier = module_specifier.as_ref().to_string()
+        );
+        let _span = span.enter();
+
         let module_specifier = module_specifier.as_ref();
 
         let module = self.resolve_module(scope, module_specifier)?;

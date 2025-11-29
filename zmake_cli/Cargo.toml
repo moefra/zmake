@@ -48,6 +48,14 @@ strum.workspace = true
 sha2.workspace = true
 hex.workspace = true
 
+tracing-error.workspace = true
+
+tracing-tree.workspace = true
+
+# ZMake cli use unwrap() to report backtrace to users
+#[lints]
+#workspace = true
+
 [features]
 default = []
 

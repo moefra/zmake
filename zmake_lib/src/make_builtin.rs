@@ -95,7 +95,7 @@ macro_rules! make_builtin_js {
             let mut map = ::std::collections::BTreeMap::<::std::string::String, $crate::make_builtin::Syscall>::new();
 
             $(
-                map.insert(::std::format!("{}", std::stringify!(syscall)), $syscall as $crate::make_builtin::Syscall).unwrap();
+                let _ = map.insert(::std::format!("{}", std::stringify!($syscall)), $syscall as $crate::make_builtin::Syscall);
             )*
 
             map
@@ -106,7 +106,7 @@ macro_rules! make_builtin_js {
             let mut map = ::std::collections::BTreeMap::<::std::string::String, $crate::make_builtin::SysAccessor>::new();
 
             $(
-                map.insert(::std::format!("{}", std::stringify!(accessor)), $accessor as $crate::make_builtin::SysAccessor).unwrap();
+                let _ = map.insert(::std::format!("{}", std::stringify!($accessor)), $accessor as $crate::make_builtin::SysAccessor);
             )*
 
             map
@@ -121,18 +121,18 @@ macro_rules! make_builtin_js {
                     $crate::module_loader::ModuleLoadError::V8ObjectAllocationError("failed to create function")
                 })?;
 
-                module.set_synthetic_module_export(
+                if let Some(true) = module.set_synthetic_module_export(
                     scope,
                     ::v8::String::new(scope, ::std::stringify!($syscall))
                     .ok_or_else(|| {
                         $crate::module_loader::ModuleLoadError::V8ObjectAllocationError("failed to create function name")
                     })?,
-                    function.into()
-                    )
-                    .ok_or_else(|| {
-                        $crate::module_loader::ModuleLoadError::V8SyntheticModuleBuildingError(::std::stringify!($syscall))
-                    })?;
+                    function.into()){}
+                else{
+                    return Err($crate::module_loader::ModuleLoadError::V8SyntheticModuleBuildingError(::std::stringify!($syscall)));
+                }
                 )*
+
             Ok(())
         }
 
@@ -142,17 +142,16 @@ macro_rules! make_builtin_js {
                 $(
                     let accessor = $accessor(scope)?;
 
-                    module.set_synthetic_module_export(
+                    if let Some(true) = module.set_synthetic_module_export(
                         scope,
                         ::v8::String::new(scope, ::std::stringify!($accessor))
                         .ok_or_else(|| {
                             $crate::module_loader::ModuleLoadError::V8ObjectAllocationError("failed to create accessor name")
-                    })?,
-                        accessor
-                    )
-                    .ok_or_else(|| {
-                        $crate::module_loader::ModuleLoadError::V8SyntheticModuleBuildingError(::std::stringify!($syscall))
-                    })?;
+                        })?,
+                        accessor){}
+                    else{
+                        return Err($crate::module_loader::ModuleLoadError::V8SyntheticModuleBuildingError(::std::stringify!($syscall)));
+                    }
                 )*
 
             Ok(())

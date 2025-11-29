@@ -4,6 +4,7 @@ use clap::builder::styling::Color::Ansi;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, arg, command};
 use clap_complete::{generate, shells};
 use color_eyre::owo_colors::OwoColorize;
+use colorchoice::ColorChoice;
 use const_format::concatcp;
 use opentelemetry::trace::TracerProvider;
 use sha2::Digest;
@@ -17,6 +18,7 @@ use tracing::trace;
 use tracing::{Level, info, trace_span};
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_tree::HierarchicalLayer;
 use zmake_lib::engine::{Engine, EngineMode, EngineOptions};
 use zmake_lib::project_resolver::ProjectResolver;
 use zmake_lib::sandbox::Sandbox;
@@ -84,69 +86,18 @@ struct Args {
     )]
     backtrace: bool,
 
-    #[arg(
-        global = true,
-        group = "logging_level",
-        long,
-        help = "logging the most detailed information",
-        visible_alias = "verbose"
-    )]
-    log_trace: bool,
-
-    #[arg(
-        global = true,
-        group = "logging_level",
-        long,
-        help = "logging more detailed information"
-    )]
-    log_debug: bool,
-
-    #[arg(
-        global = true,
-        group = "logging_level",
-        long,
-        help = "logging common information"
-    )]
-    log_information: bool,
-
-    #[arg(
-        global = true,
-        group = "logging_level",
-        long,
-        help = "logging warnings only"
-    )]
-    log_warning: bool,
-
-    #[arg(
-        global = true,
-        group = "logging_level",
-        long,
-        help = "logging errors only"
-    )]
-    log_error: bool,
-
-    #[arg(
-        global = true,
-        group = "logging_level",
-        long,
-        help = "no logging",
-        visible_alias = "quiet"
-    )]
-    log_off: bool,
-
-    #[arg(
-        value_enum,
-        global = true,
-        group = "logging_level",
-        long,
-        help = "set logging level",
-        required = false,
-        default_value = "info"
-    )]
-    log_level: Level,
-
     #[command(flatten)]
     color: colorchoice_clap::Color,
+
+    /// Change to DIRECTORY before doing anything
+    #[arg(
+        short = 'C',
+        long = "directory",
+        global = true,
+        value_name = "DIR",
+        help = "Change to DIRECTORY before doing anything,but argfile is still read in current directory,not changed directory"
+    )]
+    pub chdir: Option<std::path::PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -438,17 +389,17 @@ fn setup_backtrace_env(enable_backtrace: bool) {
 }
 
 fn inner_main() -> eyre::Result<()> {
-    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-        .with_simple_exporter(opentelemetry_stdout::SpanExporter::default()) // TODO: send information to remote
-        .build();
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
 
     let tracer = provider.tracer("zmake");
 
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    let subscriber = Registry::default().with(telemetry);
+    let subscriber = Registry::default()
+        .with(telemetry)
+        .with(HierarchicalLayer::new(2));
 
-    tracing::subscriber::set_global_default(subscriber)?;
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     let _span = trace_span!("zmake start", version = env!("CARGO_PKG_VERSION")).entered();
 
@@ -464,9 +415,24 @@ fn inner_main() -> eyre::Result<()> {
         return run_deno(&args[2..]);
     }
 
+    trace!("get arguments: {:?}", args);
+
     let args = Args::parse_from(args);
 
     parse_args_span.exit();
+
+    if let Some(dir) = args.chdir {
+        let dir = PathBuf::from(dir);
+        let dir = dir
+            .canonicalize()
+            .expect("failed to canonicalize directory");
+        env::set_current_dir(&dir).expect("failed to change directory");
+    }
+
+    info!(
+        "working directory: {}",
+        env::current_dir().unwrap().display()
+    );
 
     args.color.write_global();
     setup_backtrace_env(args.backtrace);
@@ -479,38 +445,6 @@ fn inner_main() -> eyre::Result<()> {
         }
         ::colorchoice::ColorChoice::Never => {}
     };
-
-    /*
-    if false {
-        todo!("remove opentelemetry_stdout once we send log to remote and enable this");
-
-        if !args.log_off {
-            let subscriber = FmtSubscriber::builder().with_max_level(if args.log_trace {
-                Level::TRACE
-            } else if args.log_debug {
-                Level::DEBUG
-            } else if args.log_information {
-                Level::INFO
-            } else if args.log_warning {
-                Level::WARN
-            } else if args.log_error {
-                Level::ERROR
-            } else {
-                args.log_level
-            });
-
-            let subscriber = match ColorChoice::global() {
-                ColorChoice::AlwaysAnsi | ColorChoice::Always => subscriber.with_ansi(true),
-                ColorChoice::Never => subscriber.with_ansi(false),
-                ColorChoice::Auto => subscriber,
-            }
-            .finish();
-
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("setting default subscriber failed");
-        }
-    }
-    */
 
     return match args.command {
         SubCommands::Information(args) => args.invoke(),

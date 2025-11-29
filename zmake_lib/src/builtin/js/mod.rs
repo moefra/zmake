@@ -4,7 +4,8 @@ use tracing_subscriber::field::debug;
 
 use crate::{make_builtin_js, module_loader::ModuleLoadError, module_specifier::ModuleSpecifier};
 
-pub static RT_CODE: &'static str = concat!(std::env!("CARGO_MANIFEST_DIR"), "/../dist/rt.js");
+pub static RT_CODE: &'static str =
+    include_str!(concat!(std::env!("CARGO_MANIFEST_DIR"), "/../dist/rt.js"));
 
 #[::static_init::dynamic(lazy)]
 pub static RT: ModuleSpecifier = ModuleSpecifier::Builtin("rt".to_string());
@@ -43,22 +44,22 @@ pub fn log<'s, 'i>(
 
     match level.as_ref() {
         "trace" => {
-            trace!("script log trace: {}", message);
+            trace!("FROM SCRIPT {}", message);
         }
         "debug" => {
-            debug!("script log debug: {}", message);
+            debug!("FROM SCRIPT {}", message);
         }
         "info" => {
-            info!("script log info: {}", message);
+            info!("FROM SCRIPT {}", message);
         }
         "warn" => {
-            warn!("script log warn: {}", message);
+            warn!("FROM SCRIPT {}", message);
         }
         "error" => {
-            error!("script log error: {}", message);
+            error!("FROM SCRIPT {}", message);
         }
         _ => {
-            println!("script log unknown: {}", message);
+            error!("UNKNOWN LOG LEVEL FROM SCRIPT {}", message);
         }
     }
 
