@@ -25,13 +25,13 @@ pub enum ProjectResolveError {
 
 #[derive(Debug)]
 pub struct ProjectResolver {
-    engine: Rc<Engine>,
+    engine: Engine,
     result: AHashMap<PathBuf, ProjectExported>,
     resolving: AHashMap<PathBuf, bool>,
 }
 
 impl ProjectResolver {
-    pub fn new(engine: Rc<Engine>) -> Rc<Self> {
+    pub fn new(engine: Engine) -> Rc<Self> {
         Rc::from(ProjectResolver {
             engine,
             result: AHashMap::default(),

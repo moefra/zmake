@@ -1,4 +1,5 @@
 use crate::builtin;
+use crate::engine::State;
 use crate::module_loader::ModuleLoadError::NotSupported;
 use crate::module_specifier::ModuleSpecifier;
 use crate::path::NeutralPath;
@@ -80,7 +81,7 @@ impl ModuleLoader {
 
     /// Resolve path
     fn resolve_module_specifier(
-        self: &Rc<Self>,
+        self: &Self,
         specifier: &ModuleSpecifier,
         referrer: &ModuleSpecifier,
     ) -> Result<ModuleSpecifier, ModuleLoadError> {
@@ -131,7 +132,7 @@ impl ModuleLoader {
     ///
     /// Import-map and memory module has been resolved in `resolve` method.
     pub fn resolve_module<'s, 'i>(
-        self: &Rc<Self>,
+        self: &Self,
         scope: &PinScope<'s, 'i>,
         specifier: &ModuleSpecifier,
     ) -> Result<Local<'s, v8::Module>, ModuleLoadError> {
@@ -228,7 +229,7 @@ impl ModuleLoader {
     }
 
     pub fn instantiate_and_evaluate_module<'s, 'i>(
-        self: &Rc<Self>,
+        self: &Self,
         scope: &PinScope<'s, 'i>,
         module: &Local<v8::Module>,
     ) -> Option<Local<'s, v8::Value>> {
@@ -305,10 +306,10 @@ impl ModuleLoader {
         specifier: Local<'s, v8::String>,
         import_attributes: Local<'s, FixedArray>,
     ) -> Option<Local<'s, Promise>> {
-        let loader = match scope.get_slot::<Rc<ModuleLoader>>() {
-            Some(loader) => loader,
+        let state = match scope.get_current_context().get_slot::<Rc<State>>() {
+            Some(state) => state,
             None => {
-                error!("failed to get module loader from slot");
+                error!("failed to get state from slot");
                 return None;
             }
         };
@@ -317,7 +318,10 @@ impl ModuleLoader {
         let specifier = specifier.to_rust_string_lossy(scope);
         let specifier = ModuleSpecifier::from(specifier);
 
-        let resolved = match loader.resolve_module_specifier(&referer, &specifier) {
+        let resolved = match state
+            .module_loader
+            .resolve_module_specifier(&referer, &specifier)
+        {
             Ok(resolved) => resolved,
             Err(err) => {
                 error!("failed to resolve module specifier: {}", err);
@@ -325,7 +329,7 @@ impl ModuleLoader {
             }
         };
 
-        let module = match loader.resolve_module(scope, &resolved) {
+        let module = match state.module_loader.resolve_module(scope, &resolved) {
             Ok(module) => module,
             Err(err) => {
                 error!("failed to resolve module: {}", err);
@@ -333,7 +337,10 @@ impl ModuleLoader {
             }
         };
 
-        let module = match loader.instantiate_and_evaluate_module(scope, &module) {
+        let module = match state
+            .module_loader
+            .instantiate_and_evaluate_module(scope, &module)
+        {
             Some(module) => module,
             None => {
                 error!(
@@ -359,7 +366,7 @@ impl ModuleLoader {
     }
 
     pub fn execute_module<'s, 'i>(
-        self: Rc<Self>,
+        self: &Self,
         scope: &mut PinScope<'s, 'i>,
         module_specifier: impl AsRef<ModuleSpecifier>,
     ) -> Result<Local<'s, v8::Value>, ModuleLoadError> {
@@ -374,14 +381,7 @@ impl ModuleLoader {
         Ok(module)
     }
 
-    pub fn apply(self, isolate: &mut v8::OwnedIsolate) -> Rc<Self> {
-        let rc = Rc::new(self);
-
-        // we set slot when we load module with context
-        isolate.set_slot(rc.clone());
-
+    pub fn apply(&self, isolate: &mut v8::OwnedIsolate) {
         isolate.set_host_import_module_dynamically_callback(Self::load_module_async_hook);
-
-        rc
     }
 }

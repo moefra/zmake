@@ -25,8 +25,9 @@ const STYLES: styling::Styles = styling::Styles::styled()
     .header(
         styling::AnsiColor::Green
             .on_default()
-            .bg_color(Some(Ansi(AnsiColor::BrightRed)))
-            .bold(),
+            .bg_color(Some(Ansi(AnsiColor::BrightWhite)))
+            .bold()
+            .italic(),
     )
     .usage(
         styling::AnsiColor::Green
@@ -263,7 +264,7 @@ impl MakeArgs {
             },
         )?;
 
-        let resolver = ProjectResolver::new(engine.clone());
+        let resolver = ProjectResolver::new(engine);
 
         resolver.resolve_project(project_file.to_string_lossy().to_string())?;
 
